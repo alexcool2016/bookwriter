@@ -5,7 +5,7 @@ A professional book writing application with markdown support and AES-256 encryp
 ## Features
 
 - **Rich Text Editing**: Professional markdown editor with live preview
-- **Book Organization**: Organize your work by chapters, characters, world building, and story elements
+- **Book Organization**: Organize your work by chapters, characters, world building, and story notes
 - **Strong Encryption**: AES-256 encryption to protect your work with password
 - **Auto-save**: Automatic saving to prevent data loss
 - **Export Options**: Export to markdown format
@@ -61,7 +61,8 @@ python main.py
 ### Writing and Editing
 
 - Use the project navigator on the left to organize your book structure
-- Add chapters, characters, and world building elements
+- Add chapters, characters, world building elements, and story notes
+- Create multiple story notes using the "+ Note" button for ideas, plot points, and research
 - Use the rich text editor with markdown formatting tools
 - Preview your work in real-time on the right panel
 
@@ -193,6 +194,13 @@ The application follows a modular architecture:
 This project is provided as-is for educational and personal use.
 
 ## Version History
+
+- **v1.1.0** - Story Notes Enhancement
+  - Changed "Story Elements" to "Story Notes"
+  - Added ability to create multiple individual story notes
+  - Enhanced "+ Note" button functionality
+  - Improved note management with title and content editing
+  - Auto-save for story notes
 
 - **v1.0.0** - Initial release with core functionality
   - Rich text editing with markdown support
