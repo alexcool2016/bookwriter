@@ -4,6 +4,7 @@ Provides the primary user interface with menu bar, toolbar, and main editing are
 """
 
 import os
+from typing import Dict
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QMenuBar, QToolBar, QStatusBar, QTextEdit, QTreeWidget, QTreeWidgetItem,
@@ -36,6 +37,7 @@ class MainWindow(QMainWindow):
         # Initialize components
         self.current_book: Book = None
         self.current_book_password: str = None  # Store password for encrypted books
+        self.open_books: Dict[str, Dict[str, any]] = {}  # Store multiple open books
         self.file_manager = FileManager()
         self.markdown_processor = MarkdownProcessor()
         
@@ -175,6 +177,19 @@ class MainWindow(QMainWindow):
         self.change_password_action.triggered.connect(self.change_password)
         self.change_password_action.setEnabled(False)
         file_menu.addAction(self.change_password_action)
+        
+        file_menu.addSeparator()
+        
+        # Book switching submenu
+        self.books_menu = file_menu.addMenu("Select Open &Books")
+        self.update_books_menu()
+        
+        # Close book action
+        self.close_book_action = QAction("&Close Book", self)
+        self.close_book_action.setShortcut(QKeySequence("Ctrl+W"))
+        self.close_book_action.triggered.connect(self.close_current_book)
+        self.close_book_action.setEnabled(False)
+        file_menu.addAction(self.close_book_action)
         
         file_menu.addSeparator()
         
@@ -400,19 +415,25 @@ class MainWindow(QMainWindow):
             book_info = dialog.get_book_info()
             
             # Create new book
-            self.current_book = Book(
+            new_book = Book(
                 title=book_info['title'],
                 author=book_info['author'],
                 genre=book_info['genre']
             )
             
-            # Update UI
-            self.current_book_password = None  # New books start unencrypted
-            self.update_ui_for_book()
-            self.navigator.set_book(self.current_book)
+            # Add to open books
+            book_key = f"new_book_{len(self.open_books)}"
+            self.open_books[book_key] = {
+                'book': new_book,
+                'password': None,
+                'file_path': None
+            }
+            
+            # Switch to new book
+            self.switch_to_book(book_key)
             
             # Add initial chapter
-            chapter = self.current_book.add_chapter("Chapter 1")
+            chapter = new_book.add_chapter("Chapter 1")
             # Update word count with markdown processor
             chapter.update_word_count(self.markdown_processor)
             self.open_chapter_editor(chapter)
@@ -428,38 +449,53 @@ class MainWindow(QMainWindow):
     
     def open_book_file(self, file_path: str):
         """Open a book file with password prompt if needed."""
+        # Check if book is already open
+        for book_key, book_info in self.open_books.items():
+            if book_info.get('file_path') == file_path:
+                self.switch_to_book(book_key)
+                return
+        
         try:
             # Try to determine if file is encrypted
             with open(file_path, 'rb') as f:
                 header = f.read(4)
             
+            book = None
+            password = None
+            
             if header == b"BOOK":
                 # File is encrypted, prompt for password
-                password_dialog = PasswordDialog(self, "Enter Password", 
+                password_dialog = PasswordDialog(self, "Enter Password",
                                                "Enter the password to open this book:")
                 if password_dialog.exec() == QDialog.DialogCode.Accepted:
                     password = password_dialog.get_password()
                     try:
-                        self.current_book = Book.load_from_file(file_path, password)
-                        self.current_book_password = password  # Store password for future saves
-                        # Refresh word counts with markdown processor
-                        self.current_book.refresh_word_counts(self.markdown_processor)
-                        self.file_manager.add_recent_file(file_path, self.current_book.title)
-                        self.update_ui_for_book()
-                        self.navigator.set_book(self.current_book)
-                        self.status_bar.showMessage(f"Opened: {self.current_book.title}", 3000)
+                        book = Book.load_from_file(file_path, password)
                     except ValueError as e:
                         QMessageBox.critical(self, "Error", f"Failed to open book: {e}")
+                        return
+                else:
+                    return  # User cancelled password dialog
             else:
                 # Try to open as unencrypted
-                self.current_book = Book.load_from_file(file_path)
-                self.current_book_password = None  # No password for unencrypted books
+                book = Book.load_from_file(file_path)
+            
+            if book:
                 # Refresh word counts with markdown processor
-                self.current_book.refresh_word_counts(self.markdown_processor)
-                self.file_manager.add_recent_file(file_path, self.current_book.title)
-                self.update_ui_for_book()
-                self.navigator.set_book(self.current_book)
-                self.status_bar.showMessage(f"Opened: {self.current_book.title}", 3000)
+                book.refresh_word_counts(self.markdown_processor)
+                self.file_manager.add_recent_file(file_path, book.title)
+                
+                # Add to open books
+                book_key = file_path
+                self.open_books[book_key] = {
+                    'book': book,
+                    'password': password,
+                    'file_path': file_path
+                }
+                
+                # Switch to the opened book
+                self.switch_to_book(book_key)
+                self.status_bar.showMessage(f"Opened: {book.title}", 3000)
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open book: {e}")
@@ -493,12 +529,17 @@ class MainWindow(QMainWindow):
                     if password_dialog.exec() == QDialog.DialogCode.Accepted:
                         password = password_dialog.get_password()
                         self.current_book_password = password  # Store for future use
+                        # Update the stored password in open_books
+                        self._update_book_password(password)
                         self.current_book.save_to_file(self.current_book.file_path, password)
                     else:
                         return  # User cancelled password dialog
                 else:
                     # Save without encryption
                     self.current_book.save_to_file(self.current_book.file_path)
+                
+                # Mark all editor tabs as saved
+                self._mark_all_tabs_saved()
                 
                 self.status_bar.showMessage("Book saved", 3000)
                 self.book_saved.emit(self.current_book.file_path)
@@ -540,8 +581,18 @@ class MainWindow(QMainWindow):
             try:
                 self.current_book.save_to_file(file_path, password)
                 self.file_manager.add_recent_file(file_path, self.current_book.title)
+                
+                # Update the book info in open_books
+                self._update_book_file_path(file_path)
+                self.current_book_password = password
+                self._update_book_password(password)
+                
+                # Mark all editor tabs as saved
+                self._mark_all_tabs_saved()
+                
                 self.status_bar.showMessage("Book saved", 3000)
                 self.update_ui_for_book()
+                self.update_books_menu()
                 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save book: {e}")
@@ -612,6 +663,7 @@ class MainWindow(QMainWindow):
             self.save_as_action.setEnabled(True)
             self.export_action.setEnabled(True)
             self.change_password_action.setEnabled(True)
+            self.close_book_action.setEnabled(True)
             
             # Update window title
             self.setWindowTitle(f"BookWriter - {self.current_book.title}")
@@ -641,6 +693,7 @@ class MainWindow(QMainWindow):
             self.save_as_action.setEnabled(False)
             self.export_action.setEnabled(False)
             self.change_password_action.setEnabled(False)
+            self.close_book_action.setEnabled(False)
             
             # Reset window title
             self.setWindowTitle("BookWriter")
@@ -1055,3 +1108,138 @@ class MainWindow(QMainWindow):
         
         # Accept the close event
         event.accept()
+    
+    def switch_to_book(self, book_key: str):
+        """Switch to a specific book."""
+        if book_key not in self.open_books:
+            return
+        
+        book_info = self.open_books[book_key]
+        self.current_book = book_info['book']
+        self.current_book_password = book_info['password']
+        
+        # Update UI
+        self.update_ui_for_book()
+        self.navigator.set_book(self.current_book)
+        self.update_books_menu()
+        
+        # Close all editor tabs and reopen them for the current book
+        self.close_all_tabs()
+    
+    def close_current_book(self):
+        """Close the current book."""
+        if not self.current_book:
+            return
+        
+        # Find the current book key
+        current_book_key = None
+        for book_key, book_info in self.open_books.items():
+            if book_info['book'] == self.current_book:
+                current_book_key = book_key
+                break
+        
+        if current_book_key:
+            # Check for unsaved changes in editor tabs or if book needs saving
+            has_unsaved = self.has_unsaved_changes()
+            
+            # Always ask user if they want to save before closing
+            if has_unsaved or self.current_book.file_path:
+                reply = QMessageBox.question(
+                    self, "Close Book",
+                    f"Do you want to save '{self.current_book.title}' before closing?",
+                    QMessageBox.StandardButton.Save |
+                    QMessageBox.StandardButton.Discard |
+                    QMessageBox.StandardButton.Cancel
+                )
+                
+                if reply == QMessageBox.StandardButton.Save:
+                    # Save the book
+                    if not self.current_book.file_path:
+                        # New book, need to save as
+                        self.save_book_as()
+                        # Check if save was cancelled
+                        if not self.current_book.file_path:
+                            return  # User cancelled save dialog
+                    else:
+                        self.save_book()
+                elif reply == QMessageBox.StandardButton.Cancel:
+                    return
+                # If Discard is selected, continue with closing
+            
+            # Remove from open books
+            del self.open_books[current_book_key]
+            
+            # Close all tabs
+            self.close_all_tabs()
+            
+            # Switch to another book if available
+            if self.open_books:
+                next_book_key = list(self.open_books.keys())[0]
+                self.switch_to_book(next_book_key)
+            else:
+                # No books open, reset UI
+                self.current_book = None
+                self.current_book_password = None
+                self.update_ui_for_book()
+                self.navigator.set_book(None)
+                self.show_welcome_screen()
+            
+            self.update_books_menu()
+    
+    def close_all_tabs(self):
+        """Close all editor tabs."""
+        while self.editor_tabs.count() > 0:
+            self.editor_tabs.removeTab(0)
+        self.update_edit_actions(False)
+    
+    def update_books_menu(self):
+        """Update the books menu with currently open books."""
+        self.books_menu.clear()
+        
+        if not self.open_books:
+            no_books_action = QAction("No books open", self)
+            no_books_action.setEnabled(False)
+            self.books_menu.addAction(no_books_action)
+            return
+        
+        for book_key, book_info in self.open_books.items():
+            book = book_info['book']
+            action_text = book.title or "Untitled Book"
+            
+            # Add indicator for current book
+            if book == self.current_book:
+                action_text = f"● {action_text}"
+            
+            action = QAction(action_text, self)
+            action.triggered.connect(lambda checked, key=book_key: self.switch_to_book(key))
+            self.books_menu.addAction(action)
+    
+    def has_unsaved_changes(self) -> bool:
+        """Check if the current book has unsaved changes."""
+        # Check all open editor tabs for unsaved changes
+        for i in range(self.editor_tabs.count()):
+            widget = self.editor_tabs.widget(i)
+            if hasattr(widget, 'has_unsaved_changes') and widget.has_unsaved_changes():
+                return True
+        return False
+    
+    def _update_book_password(self, password: str):
+        """Update the password for the current book in open_books."""
+        for book_key, book_info in self.open_books.items():
+            if book_info['book'] == self.current_book:
+                book_info['password'] = password
+                break
+    
+    def _mark_all_tabs_saved(self):
+        """Mark all editor tabs as saved."""
+        for i in range(self.editor_tabs.count()):
+            widget = self.editor_tabs.widget(i)
+            if hasattr(widget, 'mark_saved'):
+                widget.mark_saved()
+    
+    def _update_book_file_path(self, file_path: str):
+        """Update the file path for the current book in open_books."""
+        for book_key, book_info in self.open_books.items():
+            if book_info['book'] == self.current_book:
+                book_info['file_path'] = file_path
+                break

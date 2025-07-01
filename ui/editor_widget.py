@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QSplitter, QTextBrowser, QFrame
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QTextCharFormat, QColor, QAction, QIcon
+from PyQt6.QtGui import QFont, QTextCharFormat, QColor, QAction, QIcon, QTextDocument
 
 from core.book import Chapter
 from utils.markdown_processor import MarkdownProcessor
@@ -412,14 +412,59 @@ class EditorWidget(QWidget):
     
     def find_text(self, text: str, case_sensitive: bool, whole_words: bool):
         """Find text in the editor."""
-        # Implementation for finding text
-        pass
+        if not text:
+            return False
+        
+        # Get search flags
+        flags = QTextDocument.FindFlag(0)
+        if case_sensitive:
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        if whole_words:
+            flags |= QTextDocument.FindFlag.FindWholeWords
+        
+        # Find the text
+        cursor = self.text_editor.textCursor()
+        found_cursor = self.text_editor.document().find(text, cursor, flags)
+        
+        if not found_cursor.isNull():
+            # Text found, select it
+            self.text_editor.setTextCursor(found_cursor)
+            return True
+        else:
+            # Not found from current position, try from beginning
+            found_cursor = self.text_editor.document().find(text, 0, flags)
+            if not found_cursor.isNull():
+                self.text_editor.setTextCursor(found_cursor)
+                return True
+        
+        return False
     
-    def replace_text(self, find_text: str, replace_text: str, 
+    def replace_text(self, find_text: str, replace_text: str,
                     case_sensitive: bool, whole_words: bool):
         """Replace current selection with new text."""
-        # Implementation for replacing text
-        pass
+        cursor = self.text_editor.textCursor()
+        
+        if cursor.hasSelection():
+            selected_text = cursor.selectedText()
+            
+            # Check if selected text matches find text
+            if case_sensitive:
+                matches = selected_text == find_text
+            else:
+                matches = selected_text.lower() == find_text.lower()
+            
+            if whole_words:
+                # For whole words, we need to check word boundaries
+                # This is a simplified check - the actual selection should already be correct
+                # if it was found using whole word search
+                pass
+            
+            if matches:
+                cursor.insertText(replace_text)
+                return True
+        
+        # If no selection or selection doesn't match, try to find next occurrence
+        return self.find_text(find_text, case_sensitive, whole_words)
     
     def replace_all_text(self, find_text: str, replace_text: str, 
                         case_sensitive: bool, whole_words: bool):
